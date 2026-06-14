@@ -57,7 +57,7 @@ SUPPORTED_EXT = (".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb",
 
 # ----------------- CONFIG -----------------
 APP_NAME = "PDFConverter"
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.1.5"
 GITHUB_OWNER = "lichenlong0226-cyber"
 GITHUB_REPO = "pdf"
 ASSET_PREFIX = f"{APP_NAME}-setup-"
@@ -224,24 +224,32 @@ class DropTable(QTableWidget):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.DropOnly)
+        self.setDragDropMode(QAbstractItemView.DragDrop)
         self.verticalHeader().setVisible(False)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
+        if event.source() == self:
+            event.acceptProposedAction()
+        elif event.mimeData().hasUrls():
             event.setDropAction(Qt.CopyAction)
             event.accept()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
+        if event.source() == self:
+            event.acceptProposedAction()
+        elif event.mimeData().hasUrls():
             event.setDropAction(Qt.CopyAction)
             event.accept()
         else:
             event.ignore()
 
     def dropEvent(self, event):
+        if event.source() == self:
+            super().dropEvent(event)
+            self.parent()._update_file_count()
+            return
         if not event.mimeData().hasUrls():
             event.ignore()
             return
@@ -340,7 +348,7 @@ class ConverterApp(QWidget):
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #e0e0e0;")
         top.addWidget(title)
         top.addStretch()
-        self.btn_check_update = QPushButton("检查更新")
+        self.btn_check_update = QPushButton(f"检查更新 v{APP_VERSION}")
         self.btn_check_update.setFixedWidth(100)
         self.btn_check_update.clicked.connect(self.manual_check_update)
         top.addWidget(self.btn_check_update)
@@ -378,7 +386,7 @@ class ConverterApp(QWidget):
         # ---- 输出目录行 ----
         out_row = QHBoxLayout()
         self.out_edit = QLineEdit()
-        self.out_edit.setPlaceholderText("输出目录（留空为桌面）")
+        self.out_edit.setPlaceholderText("输出目录（留空则使用桌面/PDFConverter_output）")
         self.btn_out = QPushButton("选择目录")
         self.btn_out.setFixedWidth(100)
         out_row.addWidget(QLabel("输出:"))
@@ -433,7 +441,7 @@ class ConverterApp(QWidget):
         self.update_timer.timeout.connect(lambda: self.check_for_updates(background=True))
         self.update_timer.start()
 
-        self.output_dir = str(Path.home() / "Desktop")
+        self.output_dir = str(Path.home() / "Desktop" / "PDFConverter_output")
         self.cancel_requested = False
 
     def _apply_style(self):
@@ -588,6 +596,10 @@ class ConverterApp(QWidget):
             if self.chk_merge.isChecked() and self.pdfs_generated:
                 self.merge_after_convert()
             else:
+                try:
+                    subprocess.Popen(["explorer", self.output_dir])
+                except Exception:
+                    pass
                 QMessageBox.information(self, "完成", f"已完成转换，生成 {len(self.pdfs_generated)} 个 PDF\n输出目录：{self.output_dir}")
 
     def merge_after_convert(self):
@@ -602,6 +614,10 @@ class ConverterApp(QWidget):
             for p in self.pdfs_generated:
                 merger.append(p)
             merger.write(merged_name)
+            try:
+                subprocess.Popen(f"explorer /select,\"{merged_name}\"")
+            except Exception:
+                pass
             QMessageBox.information(self, "完成", f"已完成转换并合并\n合并文件：{merged_name}")
             self.append_log(f"合并完成：{merged_name}")
         except Exception as e:
@@ -776,6 +792,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
