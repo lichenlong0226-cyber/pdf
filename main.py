@@ -57,7 +57,7 @@ SUPPORTED_EXT = (".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb",
 
 # ----------------- CONFIG -----------------
 APP_NAME = "PDFConverter"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 GITHUB_OWNER = "lichenlong0226-cyber"
 GITHUB_REPO = "PDFConverter"
 ASSET_PREFIX = f"{APP_NAME}-setup-"
@@ -403,7 +403,7 @@ class ConverterApp(QWidget):
         out_row.addWidget(self.out_edit, stretch=1)
         out_row.addWidget(self.btn_out)
         self.btn_out.clicked.connect(self.choose_out_dir)
-        out_layout.addLayout(out_row)
+        main_layout.addLayout(out_row)
 
         # ---- 操作行 ----
         ops_row = QHBoxLayout()
@@ -824,6 +824,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
