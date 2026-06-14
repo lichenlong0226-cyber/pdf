@@ -57,7 +57,7 @@ SUPPORTED_EXT = (".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb",
 
 # ----------------- CONFIG -----------------
 APP_NAME = "PDFConverter"
-APP_VERSION = "1.1.8"
+APP_VERSION = "1.1.9"
 GITHUB_OWNER = "lichenlong0226-cyber"
 GITHUB_REPO = "PDFConverter"
 ASSET_PREFIX = f"{APP_NAME}-setup-"
@@ -224,8 +224,15 @@ class DropTable(QTableWidget):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDragDropMode(QAbstractItemView.DragDrop); self.setDefaultDropAction(Qt.MoveAction)
         self.verticalHeader().setVisible(False)
+
+    def mousePressEvent(self, event):
+        index = self.indexAt(event.pos())
+        if not index.isValid():
+            self.clearSelection()
+            self.setCurrentIndex(QModelIndex())
+        super().mousePressEvent(event)
 
     def dragEnterEvent(self, event):
         if event.source() == self:
@@ -238,7 +245,8 @@ class DropTable(QTableWidget):
 
     def dragMoveEvent(self, event):
         if event.source() == self:
-            event.acceptProposedAction()
+            event.setDropAction(Qt.MoveAction)
+            event.accept()
         elif event.mimeData().hasUrls():
             event.setDropAction(Qt.CopyAction)
             event.accept()
@@ -247,6 +255,8 @@ class DropTable(QTableWidget):
 
     def dropEvent(self, event):
         if event.source() == self:
+            event.setDropAction(Qt.MoveAction)
+            event.accept()
             super().dropEvent(event)
             self.parent()._update_file_count()
             return
@@ -356,7 +366,7 @@ class ConverterApp(QWidget):
         # ---- 顶栏 ----
         top = QHBoxLayout()
         title = QLabel("📄 Word/Excel → PDF")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #e0e0e0;")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #18181b;")
         top.addWidget(title)
         top.addStretch()
         self.btn_check_update = QPushButton(f"检查更新 v{APP_VERSION}")
@@ -425,7 +435,7 @@ class ConverterApp(QWidget):
         self.progress.setFormat("就绪")
         self.btn_convert = QPushButton("▶ 开始转换")
         self.btn_convert.setFixedWidth(110)
-        self.btn_convert.setStyleSheet("QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #89b4fa, stop:1 #74c7ec); color: #1e1e2e; font-weight: bold; border: none; border-radius: 6px; padding: 7px 18px; } QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #b4d0fb, stop:1 #89dcf0); } QPushButton:pressed { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #74c7ec, stop:1 #89b4fa); }")
+        self.btn_convert.setStyleSheet("QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3b82f6, stop:1 #93bbfc); color: #ffffff; font-weight: bold; border: none; border-radius: 6px; padding: 7px 18px; } QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #60a5fa, stop:1 #89dcf0); } QPushButton:pressed { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #93bbfc, stop:1 #3b82f6); }")
         self.btn_cancel = QPushButton("取消")
         self.btn_cancel.setFixedWidth(80)
         self.btn_convert.clicked.connect(self.start_conversion)
@@ -440,7 +450,7 @@ class ConverterApp(QWidget):
         # ---- 日志面板（默认折叠） ----
         self.log_toggle = QPushButton("▶ 显示日志")
         self.log_toggle.setCheckable(True)
-        self.log_toggle.setStyleSheet("QPushButton { text-align: left; padding: 4px 8px; font-size: 11px; color: #888; border: 1px solid #333; border-radius: 3px; } QPushButton:checked { color: #ccc; }")
+        self.log_toggle.setStyleSheet("QPushButton { text-align: left; padding: 4px 8px; font-size: 11px; color: #71717a; border: 1px solid #d4d4d8; border-radius: 3px; } QPushButton:checked { color: #18181b; }")
         self.log_toggle.toggled.connect(self._toggle_log)
         main_layout.addWidget(self.log_toggle)
 
@@ -471,24 +481,25 @@ class ConverterApp(QWidget):
 
     def _apply_style(self):
         self.setStyleSheet("""
-            QWidget { font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif; font-size: 12px; background: #1e1e2e; color: #cdd6f4; }
-            QPushButton { padding: 6px 16px; border: 1px solid #45475a; border-radius: 5px; background: #313244; color: #cdd6f4; }
-            QPushButton:hover { background: #45475a; border-color: #585b70; }
-            QPushButton:pressed { background: #585b70; }
-            QTableWidget { background: #181825; alternate-background-color: #1e1e2e; border: 1px solid #313244; gridline-color: #313244; border-radius: 5px; font-size: 11px; outline: none; }
+            QWidget { font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif; font-size: 12px; background: #ffffff; color: #18181b; }
+            QPushButton { padding: 6px 16px; border: 1px solid #d4d4d8; border-radius: 5px; background: #f4f4f5; color: #18181b; }
+            QPushButton:hover { background: #e4e4e7; border-color: #a1a1aa; }
+            QPushButton:pressed { background: #d4d4d8; }
+            QTableWidget { background: #ffffff; alternate-background-color: #fafafa; border: 1px solid #e4e4e7; gridline-color: #e4e4e7; border-radius: 5px; font-size: 11px; outline: none; }
             QTableWidget::item { padding: 5px 8px; border-radius: 3px; }
-            QTableWidget::item:selected { background: #45475a; color: #cdd6f4; }
-            QHeaderView::section { background: #313244; color: #a6adc8; padding: 5px 8px; border: none; border-bottom: 1px solid #45475a; font-size: 11px; font-weight: 600; }
-            QProgressBar { background: #181825; border: 1px solid #313244; border-radius: 4px; text-align: center; color: #a6adc8; font-size: 11px; }
-            QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #89b4fa, stop:1 #74c7ec); border-radius: 3px; }
-            QCheckBox { spacing: 8px; color: #cdd6f4; }
-            QCheckBox::indicator { width: 18px; height: 18px; border-radius: 3px; border: 1px solid #585b70; background: #313244; }
-            QCheckBox::indicator:checked { background: #89b4fa; border-color: #89b4fa; }
-            QLineEdit { background: #181825; border: 1px solid #313244; border-radius: 5px; padding: 5px 8px; color: #cdd6f4; selection-background-color: #45475a; }
-            QLineEdit:focus { border-color: #89b4fa; }
-            QTextEdit { background: #11111b; color: #a6adc8; font-family: Consolas, "Cascadia Code", monospace; font-size: 10px; border: 1px solid #313244; border-radius: 4px; padding: 4px; }
-            QLabel { color: #cdd6f4; }
-            QFrame { color: #313244; }
+            QTableWidget::item:selected { background: #dbeafe; color: #1e40af; }
+            QHeaderView::section { background: #f4f4f5; color: #52525b; padding: 5px 8px; border: none; border-bottom: 1px solid #e4e4e7; font-size: 11px; font-weight: 600; }
+            QProgressBar { background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 4px; text-align: center; color: #52525b; font-size: 11px; }
+            QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3b82f6, stop:1 #60a5fa); border-radius: 3px; }
+            QCheckBox { spacing: 8px; color: #18181b; }
+            QCheckBox::indicator { width: 18px; height: 18px; border-radius: 3px; border: 1px solid #a1a1aa; background: #ffffff; }
+            QCheckBox::indicator:checked { background: #3b82f6; border-color: #3b82f6; }
+            QLineEdit { background: #ffffff; border: 1px solid #d4d4d8; border-radius: 5px; padding: 5px 8px; color: #18181b; selection-background-color: #dbeafe; }
+            QLineEdit:focus { border-color: #3b82f6; }
+            QTextEdit { background: #fafafa; color: #18181b; font-family: Consolas, "Cascadia Code", monospace; font-size: 10px; border: 1px solid #e4e4e7; border-radius: 4px; padding: 4px; }
+            QLabel { color: #18181b; }
+            QGroupBox { font-weight: bold; color: #52525b; border: 1px solid #e4e4e7; border-radius: 6px; margin-top: 10px; padding-top: 16px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
         """)
 
     def _update_file_count(self):
@@ -842,6 +853,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
