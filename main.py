@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 PDFConverter: Word/Excel -> PDF 转换器（PySide6 GUI）
 功能：
@@ -8,10 +8,6 @@ PDFConverter: Word/Excel -> PDF 转换器（PySide6 GUI）
 - 多线程并发转换（QThreadPool + QRunnable）
 - 转换完成后可合并所有生成的 PDF（pypdf）
 - 自动更新：从 GitHub Releases 检查新版本，下载安装包并使用 SHA256 校验后运行安装器
-
-使用前须修改（在构建前）:
-- 在下方 CONFIG 区设置 GITHUB_OWNER 与 GITHUB_REPO 为你的仓库（已设置为 lichenlong0226-cyber/pdf）
-- 设置 APP_NAME（默认 PDFConverter）和 APP_VERSION（与 release tag 对应）
 """
 import sys
 import os
@@ -25,18 +21,19 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import (Qt, QThreadPool, QRunnable, Signal, QObject, QTimer)
-from PySide6.QtGui import QIcon, QAction, QCursor
+from PySide6.QtGui import QIcon, QAction, QCursor, QFont
 from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout,
                                QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
                                QAbstractItemView, QHeaderView, QMessageBox, QCheckBox,
-                               QProgressBar, QMenu, QTextEdit, QSplitter, QLineEdit)
+                               QProgressBar, QMenu, QTextEdit, QLineEdit, QFrame,
+                               QSizePolicy)
 
 IS_WINDOWS = platform.system() == "Windows"
 
 # Optional Windows COM
 if IS_WINDOWS:
     try:
-        import pythoncom  # noqa: F401
+        import pythoncom
         import win32com.client
     except Exception:
         win32com = None
@@ -58,14 +55,15 @@ except Exception:
 SUPPORTED_EXT = (".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb",
                  ".odt", ".ods", ".rtf", ".docm")
 
-# ----------------- CONFIG (请在 build 前调整为你的仓库信息) -----------------
+# ----------------- CONFIG -----------------
 APP_NAME = "PDFConverter"
-APP_VERSION = "1.0.0"               # 构建时应与 release tag 对应（例如 v1.0.0 -> "1.0.0")
-# 已替换为你提供的仓库
+APP_VERSION = "1.0.0"
 GITHUB_OWNER = "lichenlong0226-cyber"
 GITHUB_REPO = "pdf"
-ASSET_PREFIX = f"{APP_NAME}-setup-"  # 安装包前缀（workflow 也将生成以此为前缀的文件）
-# -------------------------------------------------------------------------
+ASSET_PREFIX = f"{APP_NAME}-setup-"
+# ------------------------------------------
+
+MAX_WORKERS = 3  # Office COM 实例并发数上限，太高反而变慢
 
 
 def log_exc_text(e: Exception) -> str:
@@ -158,7 +156,7 @@ def ensure_pdf_merger_available():
     if PdfMerger is None:
         raise RuntimeError("pypdf is required for merging PDFs. Install with `pip install pypdf`.")
 
-# ----------------- Worker & UI classes -----------------
+
 class WorkerSignals(QObject):
     started = Signal(str)
     finished = Signal(str, str)
@@ -182,13 +180,13 @@ class ConvertWorker(QRunnable):
                 target = Path(self.out_dir) / f"{base}({cnt}).pdf"
                 cnt += 1
             if IS_WINDOWS and ext in (".doc", ".docx", ".docm", ".rtf"):
-                self.signals.log.emit(f"使用 Windows Word COM 转换：{self.in_path}")
+                self.signals.log.emit(f"使用 Word COM 转换：{Path(self.in_path).name}")
                 convert_word_windows(self.in_path, str(target))
             elif IS_WINDOWS and ext in (".xls", ".xlsx", ".xlsm", ".xlsb"):
-                self.signals.log.emit(f"使用 Windows Excel COM 导出（所有 sheets）：{self.in_path}")
+                self.signals.log.emit(f"使用 Excel COM 导出：{Path(self.in_path).name}")
                 convert_excel_windows(self.in_path, str(target))
             else:
-                self.signals.log.emit(f"使用 LibreOffice 转换（后台）：{self.in_path}")
+                self.signals.log.emit(f"使用 LibreOffice 转换：{Path(self.in_path).name}")
                 tmpd = tempfile.mkdtemp()
                 try:
                     outpdf = convert_with_libreoffice(self.in_path, tmpd)
@@ -198,8 +196,11 @@ class ConvertWorker(QRunnable):
             self.signals.finished.emit(self.in_path, str(target))
         except Exception as e:
             err = f"ERR: {log_exc_text(e)}"
-            self.signals.log.emit(f"转换失败：{self.in_path} -> {err}")
+            self.signals.log.emit(f"转换失败：{Path(self.in_path).name} -> {err}")
             self.signals.finished.emit(self.in_path, err)
+
+
+# ----------------- UI -----------------
 
 class DropTable(QTableWidget):
     def __init__(self, parent=None):
@@ -209,27 +210,50 @@ class DropTable(QTableWidget):
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.setAcceptDrops(True)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DropOnly)
+        self.verticalHeader().setVisible(False)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
 
     def dropEvent(self, event):
+        if not event.mimeData().hasUrls():
+            event.ignore()
+            return
+        event.setDropAction(Qt.CopyAction)
+        event.accept()
         urls = event.mimeData().urls()
+        added = 0
         for u in urls:
             path = u.toLocalFile()
+            if not path:
+                continue
             if os.path.isdir(path):
                 for root, _, files in os.walk(path):
                     for f in files:
                         if f.lower().endswith(SUPPORTED_EXT):
-                            self.add_file(os.path.join(root, f))
+                            if self.add_file(os.path.join(root, f)):
+                                added += 1
             else:
-                self.add_file(path)
-        event.acceptProposedAction()
+                if self.add_file(path):
+                    added += 1
+        if added > 0:
+            self.parent()._update_file_count()
 
     def add_file(self, path):
         if not os.path.exists(path):
@@ -244,8 +268,12 @@ class DropTable(QTableWidget):
         self.insertRow(row)
         size_text = f"{Path(path).stat().st_size // 1024} KB"
         self.setItem(row, 0, QTableWidgetItem(path))
-        self.setItem(row, 1, QTableWidgetItem("待处理"))
-        self.setItem(row, 2, QTableWidgetItem(size_text))
+        item_status = QTableWidgetItem("待处理")
+        item_status.setTextAlignment(Qt.AlignCenter)
+        self.setItem(row, 1, item_status)
+        item_size = QTableWidgetItem(size_text)
+        item_size.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.setItem(row, 2, item_size)
         return True
 
     def _on_context_menu(self, pos):
@@ -257,13 +285,17 @@ class DropTable(QTableWidget):
         open_act = QAction("打开文件所在目录", self)
         open_act.triggered.connect(lambda: self._open_folder(path))
         remove_act = QAction("移除", self)
-        remove_act.triggered.connect(lambda: self.removeRow(row))
+        remove_act.triggered.connect(lambda: self._remove_row(row))
         retry_act = QAction("重试转换", self)
         retry_act.triggered.connect(lambda: self.parent().retry_single(path))
         menu.addAction(open_act)
         menu.addAction(remove_act)
         menu.addAction(retry_act)
         menu.exec(QCursor.pos())
+
+    def _remove_row(self, row):
+        self.removeRow(row)
+        self.parent()._update_file_count()
 
     def _open_folder(self, path):
         folder = str(Path(path).parent)
@@ -274,122 +306,171 @@ class DropTable(QTableWidget):
         else:
             subprocess.Popen(["xdg-open", folder])
 
+
 class ConverterApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} - Word/Excel -> PDF")
-        self.resize(1000, 600)
+        self.resize(960, 620)
+        self.setMinimumSize(640, 400)
         icon_path = os.path.join(os.path.dirname(__file__), "app_icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
-        self.layout = QVBoxLayout(self)
 
-        header = QLabel("<h2>Word/Excel → PDF 转换器</h2>")
-        header.setTextFormat(Qt.RichText)
-        self.layout.addWidget(header)
+        # --- 基础样式 ---
+        self._apply_style()
 
-        top_row = QHBoxLayout()
-        hint = QLabel("拖拽文件到下方列表，或使用“添加文件”。 支持 doc/docx/xls/xlsx/ods 等。")
-        top_row.addWidget(hint)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(8)
+
+        # ---- 顶栏 ----
+        top = QHBoxLayout()
+        title = QLabel("📄 Word/Excel → PDF")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #e0e0e0;")
+        top.addWidget(title)
+        top.addStretch()
         self.btn_check_update = QPushButton("检查更新")
+        self.btn_check_update.setFixedWidth(100)
         self.btn_check_update.clicked.connect(self.manual_check_update)
-        top_row.addWidget(self.btn_check_update)
-        self.layout.addLayout(top_row)
+        top.addWidget(self.btn_check_update)
+        main_layout.addLayout(top)
 
-        splitter = QSplitter(Qt.Horizontal)
-        left = QVBoxLayout()
-        container_left = QWidget()
-        container_left.setLayout(left)
-        splitter.addWidget(container_left)
+        # ---- 文件计数 ----
+        self.lbl_status = QLabel("已添加 0 个文件   |   拖拽或点击「添加文件」")
+        self.lbl_status.setStyleSheet("color: #999; font-size: 11px; padding: 2px 0;")
+        main_layout.addWidget(self.lbl_status)
 
-        right = QVBoxLayout()
-        container_right = QWidget()
-        container_right.setLayout(right)
-        splitter.addWidget(container_right)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        self.layout.addWidget(splitter)
-
+        # ---- 文件列表 ----
         self.table = DropTable(self)
-        left.addWidget(self.table)
+        main_layout.addWidget(self.table, stretch=1)
 
+        # ---- 按钮行 ----
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("添加文件...")
-        self.btn_remove = QPushButton("移除选中")
-        self.btn_clear = QPushButton("清空")
+        self.btn_add = QPushButton("+ 添加文件")
+        self.btn_remove = QPushButton("− 移除选中")
+        self.btn_clear = QPushButton("清空全部")
         btn_row.addWidget(self.btn_add)
         btn_row.addWidget(self.btn_remove)
         btn_row.addWidget(self.btn_clear)
-        left.addLayout(btn_row)
-
-        out_row = QHBoxLayout()
-        self.out_label = QLabel("输出目录:")
-        self.out_edit = QLineEdit()
-        self.out_edit.setPlaceholderText("留空使用当前目录或选择输出目录")
-        self.btn_out = QPushButton("选择输出目录")
-        out_row.addWidget(self.out_label)
-        out_row.addWidget(self.out_edit)
-        out_row.addWidget(self.btn_out)
-        left.addLayout(out_row)
-
-        ops_row = QHBoxLayout()
-        self.chk_merge = QCheckBox("转换后合并为单个 PDF")
-        self.btn_convert = QPushButton("开始转换")
-        self.btn_cancel = QPushButton("取消所有")
-        self.progress = QProgressBar()
-        self.progress.setMinimum(0)
-        self.progress.setValue(0)
-        ops_row.addWidget(self.chk_merge)
-        ops_row.addWidget(self.btn_convert)
-        ops_row.addWidget(self.btn_cancel)
-        ops_row.addWidget(self.progress)
-        left.addLayout(ops_row)
-
-        log_label = QLabel("日志")
-        right.addWidget(log_label)
-        self.log_edit = QTextEdit()
-        self.log_edit.setReadOnly(True)
-        right.addWidget(self.log_edit)
-
+        btn_row.addStretch()
         self.btn_add.clicked.connect(self.open_add_files)
         self.btn_remove.clicked.connect(self.remove_selected)
         self.btn_clear.clicked.connect(self.clear_all)
+        main_layout.addLayout(btn_row)
+
+        # ---- 分割线 ----
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #333;")
+        main_layout.addWidget(sep)
+
+        # ---- 输出目录行 ----
+        out_row = QHBoxLayout()
+        self.out_edit = QLineEdit()
+        self.out_edit.setPlaceholderText("输出目录（留空为当前目录）")
+        self.btn_out = QPushButton("选择目录")
+        self.btn_out.setFixedWidth(100)
+        out_row.addWidget(QLabel("输出:"))
+        out_row.addWidget(self.out_edit, stretch=1)
+        out_row.addWidget(self.btn_out)
         self.btn_out.clicked.connect(self.choose_out_dir)
+        main_layout.addLayout(out_row)
+
+        # ---- 操作行 ----
+        ops_row = QHBoxLayout()
+        self.chk_merge = QCheckBox("合并为单个 PDF")
+        self.progress = QProgressBar()
+        self.progress.setMinimum(0)
+        self.progress.setValue(0)
+        self.progress.setFixedHeight(20)
+        self.progress.setTextVisible(True)
+        self.progress.setFormat("就绪")
+        self.btn_convert = QPushButton("▶ 开始转换")
+        self.btn_convert.setFixedWidth(110)
+        self.btn_convert.setStyleSheet("QPushButton { background: #2d7d2d; color: white; font-weight: bold; } QPushButton:hover { background: #3a9a3a; }")
+        self.btn_cancel = QPushButton("取消")
+        self.btn_cancel.setFixedWidth(80)
         self.btn_convert.clicked.connect(self.start_conversion)
         self.btn_cancel.clicked.connect(self.cancel_all)
+        ops_row.addWidget(self.chk_merge)
+        ops_row.addWidget(self.progress, stretch=1)
+        ops_row.addWidget(self.btn_convert)
+        ops_row.addWidget(self.btn_cancel)
+        main_layout.addLayout(ops_row)
 
+        # ---- 日志面板（默认折叠） ----
+        self.log_toggle = QPushButton("▶ 显示日志")
+        self.log_toggle.setCheckable(True)
+        self.log_toggle.setStyleSheet("QPushButton { text-align: left; padding: 4px 8px; font-size: 11px; color: #888; border: 1px solid #333; border-radius: 3px; } QPushButton:checked { color: #ccc; }")
+        self.log_toggle.toggled.connect(self._toggle_log)
+        main_layout.addWidget(self.log_toggle)
+
+        self.log_edit = QTextEdit()
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setVisible(False)
+        self.log_edit.setFixedHeight(140)
+        self.log_edit.setStyleSheet("background: #1a1a1a; color: #c0c0c0; font-family: Consolas, monospace; font-size: 10px; border: 1px solid #333;")
+        main_layout.addWidget(self.log_edit)
+
+        # ---- 状态 ----
         self.pool = QThreadPool.globalInstance()
-        self.pool.setMaxThreadCount(max(1, min(8, os.cpu_count() or 4)))
+        self.pool.setMaxThreadCount(MAX_WORKERS)
         self.active_workers = {}
 
         self.update_timer = QTimer(self)
-        self.update_timer.setInterval(1000 * 60 * 60 * 24)  # daily
+        self.update_timer.setInterval(1000 * 60 * 60 * 24)
         self.update_timer.timeout.connect(lambda: self.check_for_updates(background=True))
         self.update_timer.start()
 
         self.output_dir = os.getcwd()
         self.cancel_requested = False
 
+    def _apply_style(self):
         self.setStyleSheet("""
-            QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 11px; }
-            QPushButton { padding: 6px 10px; }
-            QProgressBar { min-width: 150px; }
-            QTextEdit { background: #111; color: #eee; font-family: monospace; }
+            QWidget { font-family: "Segoe UI", Arial, sans-serif; font-size: 12px; background: #252525; color: #ddd; }
+            QPushButton { padding: 5px 14px; border: 1px solid #555; border-radius: 3px; background: #383838; }
+            QPushButton:hover { background: #4a4a4a; }
+            QPushButton:pressed { background: #555; }
+            QTableWidget { background: #1e1e1e; alternate-background-color: #222; border: 1px solid #333; gridline-color: #333; border-radius: 3px; font-size: 11px; }
+            QTableWidget::item { padding: 4px 6px; }
+            QHeaderView::section { background: #2d2d2d; color: #aaa; padding: 4px; border: 1px solid #3a3a3a; font-size: 11px; font-weight: bold; }
+            QProgressBar { background: #1e1e1e; border: 1px solid #444; border-radius: 3px; text-align: center; color: #ccc; font-size: 11px; }
+            QProgressBar::chunk { background: #2d7d2d; border-radius: 2px; }
+            QCheckBox { spacing: 6px; }
+            QCheckBox::indicator { width: 16px; height: 16px; }
+            QLineEdit { background: #1e1e1e; border: 1px solid #444; border-radius: 3px; padding: 4px 6px; color: #ddd; }
+            QTextEdit { background: #1a1a1a; color: #c0c0c0; font-family: Consolas, monospace; font-size: 10px; border: 1px solid #333; }
         """)
+
+    def _update_file_count(self):
+        count = self.table.rowCount()
+        self.lbl_status.setText(f"已添加 {count} 个文件   |   拖拽或点击「添加文件」")
+        self.lbl_status.repaint()
+
+    def _toggle_log(self, checked):
+        self.log_edit.setVisible(checked)
+        self.log_toggle.setText("▼ 隐藏日志" if checked else "▶ 显示日志")
 
     def open_add_files(self):
         files, _ = QFileDialog.getOpenFileNames(self, "选择文件", os.getcwd(),
-                                                "Word/Excel Files (*.doc *.docx *.xls *.xlsx *.xlsm *.odt *.ods *.rtf)")
+                                                "Word/Excel (*.doc *.docx *.xls *.xlsx *.xlsm *.odt *.ods *.rtf)")
+        added = 0
         for f in files:
-            self.table.add_file(f)
+            if self.table.add_file(f):
+                added += 1
+        if added:
+            self._update_file_count()
 
     def remove_selected(self):
         rows = sorted({idx.row() for idx in self.table.selectedIndexes()}, reverse=True)
         for r in rows:
             self.table.removeRow(r)
+        self._update_file_count()
 
     def clear_all(self):
         self.table.setRowCount(0)
+        self._update_file_count()
 
     def choose_out_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择输出目录", self.output_dir or os.getcwd())
@@ -399,14 +480,18 @@ class ConverterApp(QWidget):
 
     def retry_single(self, path):
         self.table.add_file(path)
+        self._update_file_count()
         if not self.active_workers:
             self.start_conversion()
 
     def append_log(self, text: str):
         self.log_edit.append(text)
+        # 自定展开日志
+        if not self.log_toggle.isChecked():
+            self.log_toggle.setChecked(True)
 
     def cancel_all(self):
-        self.append_log("取消请求：正在等待正在运行的线程结束（不可立即中止 COM 调用）。")
+        self.append_log("取消请求：等待正在运行的线程结束...")
         self.cancel_requested = True
 
     def start_conversion(self):
@@ -415,13 +500,13 @@ class ConverterApp(QWidget):
             QMessageBox.information(self, "提示", "请先添加要转换的文件。")
             return
         if IS_WINDOWS and win32com is None:
-            QMessageBox.critical(self, "错误", "Windows: 需要安装 pywin32（pip install pywin32）。")
+            QMessageBox.critical(self, "错误", "pywin32 未正确打包，请确保构建时包含该模块。")
             return
         if self.chk_merge.isChecked() and PdfMerger is None:
-            QMessageBox.critical(self, "错误", "合并功能需要 pypdf（pip install pypdf）。")
+            QMessageBox.critical(self, "错误", "pypdf 未正确打包，请确保构建时包含该模块。")
             return
         if requests is None:
-            self.append_log("警告：requests 未安装，自动更新功能不可用（pip install requests）。")
+            self.append_log("警告：requests 未安装，自动更新不可用。")
 
         od = self.out_edit.text().strip() or self.output_dir or os.getcwd()
         if not os.path.exists(od):
@@ -434,8 +519,9 @@ class ConverterApp(QWidget):
 
         self.progress.setMaximum(n)
         self.progress.setValue(0)
+        self.progress.setFormat(f"0 / {n}")
         self.cancel_requested = False
-        self.append_log(f"开始转换，共 {n} 个文件，输出目录：{self.output_dir}")
+        self.append_log(f"开始转换：{n} 个文件 → {self.output_dir}")
 
         self.pdfs_generated = []
         self.remaining = n
@@ -451,10 +537,12 @@ class ConverterApp(QWidget):
             self.pool.start(worker)
 
     def on_started(self, path):
-        self.append_log(f"[启动] {path}")
+        self.append_log(f"[启动] {Path(path).name}")
         for r in range(self.table.rowCount()):
             if self.table.item(r, 0).text() == path:
-                self.table.setItem(r, 1, QTableWidgetItem("处理中"))
+                item = QTableWidgetItem("处理中")
+                item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(r, 1, item)
 
     def on_worker_log(self, text):
         self.append_log(text)
@@ -464,35 +552,42 @@ class ConverterApp(QWidget):
         for r in range(self.table.rowCount()):
             if self.table.item(r, 0).text() == path:
                 if out_or_err.startswith("ERR:"):
-                    self.table.setItem(r, 1, QTableWidgetItem(f"失败"))
-                    self.append_log(f"[失败] {path} -> {out_or_err}")
+                    item = QTableWidgetItem("❌ 失败")
+                    item.setTextAlignment(Qt.AlignCenter)
+                    self.table.setItem(r, 1, item)
+                    self.append_log(f"[失败] {Path(path).name} -> {out_or_err}")
                 else:
-                    self.table.setItem(r, 1, QTableWidgetItem("已完成"))
-                    self.append_log(f"[完成] {path} -> {out_or_err}")
+                    item = QTableWidgetItem("✅ 已完成")
+                    item.setTextAlignment(Qt.AlignCenter)
+                    self.table.setItem(r, 1, item)
+                    self.append_log(f"[完成] {Path(path).name} -> {Path(out_or_err).name}")
                     self.pdfs_generated.append(out_or_err)
                 break
-        self.progress.setValue(self.progress.value() + 1)
+        done = self.progress.value() + 1
+        self.progress.setValue(done)
+        self.progress.setFormat(f"{done} / {self.remaining + done}")
         self.remaining -= 1
         if self.remaining <= 0 or (self.cancel_requested and not self.active_workers):
+            self.progress.setFormat("完成")
             self.append_log("全部任务已结束。")
             if self.chk_merge.isChecked() and self.pdfs_generated:
                 self.merge_after_convert()
             else:
-                QMessageBox.information(self, "完成", f"已完成转换，生成 {len(self.pdfs_generated)} 个 PDF，输出目录：\n{self.output_dir}")
+                QMessageBox.information(self, "完成", f"已完成转换，生成 {len(self.pdfs_generated)} 个 PDF\n输出目录：{self.output_dir}")
 
     def merge_after_convert(self):
         ensure_pdf_merger_available()
         default_name = os.path.join(self.output_dir, "merged.pdf")
-        merged_name, _ = QFileDialog.getSaveFileName(self, "保存合并后的 PDF 为", default_name, "PDF Files (*.pdf)")
+        merged_name, _ = QFileDialog.getSaveFileName(self, "保存合并后的 PDF", default_name, "PDF (*.pdf)")
         if not merged_name:
-            QMessageBox.information(self, "完成", "已完成转换（未保存合并结果）。")
+            QMessageBox.information(self, "完成", "已转换完成（未保存合并结果）。")
             return
         merger = PdfMerger()
         try:
             for p in self.pdfs_generated:
                 merger.append(p)
             merger.write(merged_name)
-            QMessageBox.information(self, "完成", f"已完成转换并合并，合并文件：\n{merged_name}")
+            QMessageBox.information(self, "完成", f"已完成转换并合并\n合并文件：{merged_name}")
             self.append_log(f"合并完成：{merged_name}")
         except Exception as e:
             QMessageBox.warning(self, "合并失败", f"合并 PDF 失败：{e}")
@@ -500,25 +595,25 @@ class ConverterApp(QWidget):
         finally:
             merger.close()
 
-    # ----------------- 自动更新（SHA256 校验） -----------------
+    # ---- 自动更新 ----
     def manual_check_update(self):
         self.check_for_updates(background=False)
 
     def check_for_updates(self, background: bool = True):
         if requests is None:
-            self.append_log("自动更新：requests 未安装，无法检查更新。")
+            self.append_log("更新检查：requests 未安装。")
             if not background:
-                QMessageBox.warning(self, "更新检查", "requests 未安装，无法检查更新（pip install requests）。")
+                QMessageBox.warning(self, "更新检查", "requests 未安装，无法检查更新。")
             return
 
         api_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
         try:
-            self.append_log("检查更新中...")
+            self.append_log("检查更新...")
             r = requests.get(api_url, timeout=10)
             if r.status_code != 200:
-                self.append_log(f"更新检查失败：HTTP {r.status_code}")
+                self.append_log(f"检查更新失败：HTTP {r.status_code}")
                 if not background:
-                    QMessageBox.warning(self, "更新检查", f"更新检查失败：HTTP {r.status_code}")
+                    QMessageBox.warning(self, "更新检查", f"HTTP {r.status_code}")
                 return
             data = r.json()
             tag_name = data.get("tag_name", "")
@@ -532,13 +627,13 @@ class ConverterApp(QWidget):
                         chosen = a
                         break
                 if not chosen:
-                    self.append_log("找到新版，但没有匹配的安装包资产（.exe）。")
+                    self.append_log("找到新版 {latest_version}，但无安装包资产。")
                     if not background:
-                        QMessageBox.information(self, "更新", f"找到新版 {latest_version}，但未找到安装包资产。")
+                        QMessageBox.information(self, "更新", f"找到新版 {latest_version}，但无安装包。")
                     return
 
                 checksum_asset = None
-                possible_names = [chosen["name"] + ".sha256", chosen["name"] + ".sha256.txt", "checksums.json"]
+                possible_names = [chosen["name"] + ".sha256", chosen["name"] + ".sha256.txt"]
                 for a in assets:
                     if a.get("name", "") in possible_names:
                         checksum_asset = a
@@ -546,7 +641,7 @@ class ConverterApp(QWidget):
 
                 if not background:
                     ask = QMessageBox.question(self, "更新可用",
-                                               f"发现新版本 {latest_version}（当前 {APP_VERSION}），是否下载并运行安装？")
+                                               f"发现新版本 {latest_version}（当前 {APP_VERSION}），是否下载并安装？")
                     if ask != QMessageBox.Yes:
                         return
 
@@ -554,7 +649,7 @@ class ConverterApp(QWidget):
                 checksum_url = checksum_asset.get("browser_download_url") if checksum_asset else None
                 self._download_and_run_installer(download_url, chosen.get("name"), checksum_url)
             else:
-                self.append_log("当前为最新版本。")
+                self.append_log("当前已是最新版本。")
                 if not background:
                     QMessageBox.information(self, "更新检查", "当前已是最新版本。")
         except Exception as e:
@@ -579,7 +674,7 @@ class ConverterApp(QWidget):
             return
         tmp_installer = None
         try:
-            self.append_log(f"开始下载更新：{url}")
+            self.append_log(f"下载更新：{name}")
             with requests.get(url, stream=True, timeout=60) as r:
                 r.raise_for_status()
                 fd, tmp_installer = tempfile.mkstemp(suffix=".exe", prefix="installer_")
@@ -593,38 +688,37 @@ class ConverterApp(QWidget):
             expected_hash = None
             if checksum_url:
                 try:
-                    self.append_log(f"下载校验文件：{checksum_url}")
                     r2 = requests.get(checksum_url, timeout=10)
                     r2.raise_for_status()
-                    txt = r2.text
-                    expected_hash = parse_sha256_text(txt)
+                    expected_hash = parse_sha256_text(r2.text)
                     if not expected_hash:
-                        self.append_log("无法解析校验文件内容，跳过校验。")
+                        self.append_log("无法解析校验文件，跳过校验。")
                 except Exception as e:
                     self.append_log(f"获取校验文件失败：{e}")
 
             if expected_hash:
                 actual = sha256_of_file(tmp_installer)
-                self.append_log(f"校验：实际 {actual} 期望 {expected_hash}")
+                self.append_log(f"SHA256 校验：{actual[:16]}...")
                 if actual.lower() != expected_hash.lower():
-                    self.append_log("校验失败：下载的安装包哈希与发布页面不匹配，已删除下载文件。")
+                    self.append_log("校验失败，取消安装。")
                     try:
                         os.remove(tmp_installer)
                     except Exception:
                         pass
-                    QMessageBox.critical(self, "更新校验失败", "下载的安装包校验失败，取消安装。")
+                    QMessageBox.critical(self, "校验失败", "下载的安装包校验失败，取消安装。")
                     return
 
             if IS_WINDOWS:
                 subprocess.Popen([tmp_installer], shell=False)
-                self.append_log("已启动安装程序，程序将继续运行；请手动完成安装步骤。")
-                QMessageBox.information(self, "更新", "安装程序已启动，完成安装后请重新启动程序。")
+                self.append_log("安装程序已启动。")
+                QMessageBox.information(self, "更新", "安装程序已启动，安装完成后请重新启动程序。")
             else:
-                self.append_log("自动安装仅支持 Windows 可执行安装包（.exe）。")
-                QMessageBox.information(self, "更新", "已下载更新，但自动运行仅支持 Windows 可执行安装包。")
+                self.append_log("自动安装仅支持 Windows。")
+                QMessageBox.information(self, "更新", "已下载更新，但自动安装仅支持 Windows。")
         except Exception as e:
-            self.append_log(f"下载或运行安装器失败：{e}")
-            QMessageBox.warning(self, "更新失败", f"下载或运行安装器失败：{e}")
+            self.append_log(f"下载/运行安装器失败：{e}")
+            QMessageBox.warning(self, "更新失败", f"下载/运行安装器失败：{e}")
+
 
 def main():
     app = QApplication(sys.argv)
