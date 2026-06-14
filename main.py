@@ -57,7 +57,7 @@ SUPPORTED_EXT = (".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb",
 
 # ----------------- CONFIG -----------------
 APP_NAME = "PDFConverter"
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 GITHUB_OWNER = "lichenlong0226-cyber"
 GITHUB_REPO = "pdf"
 ASSET_PREFIX = f"{APP_NAME}-setup-"
@@ -724,21 +724,42 @@ class ConverterApp(QWidget):
                     return
 
             if IS_WINDOWS:
+                # Copy installer to Desktop for easy user access
+                import shutil
+                desktop_installer = str(Path.home() / "Desktop" / f"PDFConverter-setup-{APP_VERSION}.exe")
+                try:
+                    shutil.copy2(tmp_installer, desktop_installer)
+                    launch_path = desktop_installer
+                except Exception:
+                    launch_path = tmp_installer
+
+                launched = False
+                # Method 1: PowerShell Start-Process -Verb RunAs
                 try:
                     import subprocess
                     subprocess.Popen(
                         ["powershell", "-NoProfile", "-Command",
-                         f'Start-Process -FilePath "{tmp_installer}" -Verb RunAs'],
+                         f'Start-Process -FilePath "{launch_path}" -Verb RunAs'],
                         creationflags=0x08000000
                     )
+                    launched = True
                 except Exception:
+                    pass
+                # Method 2: ShellExecuteW runas
+                if not launched:
                     try:
                         import ctypes
-                        ctypes.windll.shell32.ShellExecuteW(None, "runas", tmp_installer, None, None, 1)
+                        ctypes.windll.shell32.ShellExecuteW(None, "runas", launch_path, None, None, 1)
+                        launched = True
                     except Exception:
-                        subprocess.Popen([tmp_installer], shell=False)
-                self.append_log("安装程序已启动（请确认 UAC 弹窗中的管理员权限）。")
-                QMessageBox.information(self, "更新", "安装程序已启动，请在 UAC 对话框中点击「是」以完成安装。")
+                        pass
+                self.append_log(f"安装包已下载到桌面：{desktop_installer}")
+                if launched:
+                    QMessageBox.information(self, "更新", "安装程序已启动，请在 UAC 对话框中点击「是」以完成安装。")
+                else:
+                    QMessageBox.information(self, "更新",
+                        f"未能自动启动安装程序。\n\n安装包已保存到桌面：\n{desktop_installer}\n\n"
+                        "请右键点击该文件 → 「以管理员身份运行」")
             else:
                 self.append_log("自动安装仅支持 Windows。")
                 QMessageBox.information(self, "更新", "已下载更新，但自动安装仅支持 Windows。")
@@ -755,6 +776,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
