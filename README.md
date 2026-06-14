@@ -29,7 +29,7 @@ Office 文档转 PDF 的桌面工具，支持批量拖拽、多线程并发、PD
 
 ## 📦 下载安装
 
-从 [Releases](https://github.com/lichenlong0226-cyber/pdf/releases) 下载最新安装包：
+从 [Releases](https://github.com/lichenlong0226-cyber/PDFConverter/releases) 下载最新安装包：
 
 `
 PDFConverter-setup-v1.1.6.exe
@@ -55,7 +55,7 @@ PDFConverter-setup-v1.1.6.exe
 ## 🔧 本地开发
 
 `ash
-git clone https://github.com/lichenlong0226-cyber/pdf.git
+git clone https://github.com/lichenlong0226-cyber/PDFConverter.git
 cd pdf
 python -m venv venv
 venv\Scripts\activate
@@ -100,3 +100,4 @@ git push origin v1.1.7
 ## 📄 开源
 
 MIT License
+

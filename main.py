@@ -59,7 +59,7 @@ SUPPORTED_EXT = (".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb",
 APP_NAME = "PDFConverter"
 APP_VERSION = "1.1.6"
 GITHUB_OWNER = "lichenlong0226-cyber"
-GITHUB_REPO = "pdf"
+GITHUB_REPO = "PDFConverter"
 ASSET_PREFIX = f"{APP_NAME}-setup-"
 # ------------------------------------------
 
@@ -831,6 +831,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
