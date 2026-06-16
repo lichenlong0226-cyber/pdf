@@ -57,7 +57,7 @@ SUPPORTED_EXT = (".doc", ".docx", ".xls", ".xlsx", ".xlsm", ".xlsb",
 
 # ----------------- CONFIG -----------------
 APP_NAME = "PDFConverter"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.2"
 GITHUB_OWNER = "lichenlong0226-cyber"
 GITHUB_REPO = "PDFConverter"
 ASSET_PREFIX = f"{APP_NAME}-setup-"
@@ -226,7 +226,7 @@ class DropTable(QTableWidget):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
         self.verticalHeader().setVisible(False)
 
     def _renumber_rows(self):
@@ -247,39 +247,23 @@ class DropTable(QTableWidget):
         super().mousePressEvent(event)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls() or event.source() == self:
-            event.acceptProposedAction()
+        if event.mimeData().hasUrls():
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls() or event.source() == self:
+        if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
         if event.source() == self:
-            try:
-                pos = event.position().toPoint()
-            except:
-                pos = event.pos()
-            idx = self.indexAt(pos)
-            target = idx.row() if idx.isValid() else self.rowCount() - 1
-            sel = self.selectedItems()
-            if sel:
-                src = min(it.row() for it in sel)
-                if src < target:
-                    target += 1
-                data = [self.takeItem(src, c) for c in range(4)]
-                self.removeRow(src)
-                self.insertRow(target)
-                for c, it in enumerate(data):
-                    if it:
-                        self.setItem(target, c, it)
-                self.selectRow(target)
-                self._renumber_rows()
-                self.parent()._update_file_count()
+            super().dropEvent(event)
+            self._renumber_rows()
+            self.parent()._update_file_count()
             return
         if not event.mimeData().hasUrls():
             event.ignore()
@@ -845,6 +829,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
